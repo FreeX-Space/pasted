@@ -1,0 +1,32 @@
+# Go 编译产物
+pasted
+pasted.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go 测试产物
+*.test
+*.out
+*.prof
+cover.html
+
+# Go 工作区
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
