@@ -126,6 +126,31 @@ func main() {
 	done := make(chan struct{})
 	foundCh := mdnsSvc.Browse(BrowseInterval, done)
 
+	// 8.5 如果指定了目标 IP，启动主动连接 goroutine
+	if len(os.Args) > 1 {
+		targetIP := os.Args[1]
+		go func() {
+			addr := fmt.Sprintf("%s:%d", targetIP, ListenPort)
+			clientTLSConfig := network.NewClientTLSConfig()
+			for {
+				logger.Info("正在主动连接 %s ...", addr)
+				client, err := network.NewClient(addr, clientTLSConfig)
+				if err != nil {
+					logger.Error("连接 %s 失败: %v，1 秒后重试...", addr, err)
+					time.Sleep(1 * time.Second)
+					continue
+				}
+				peerMgr.Add(targetIP, &peer.Peer{
+					Hostname: targetIP,
+					IP:       targetIP,
+					Client:   client,
+				})
+				logger.Info("✅ 已主动连接到 %s", addr)
+				break
+			}
+		}()
+	}
+
 	// 9. 用户交互 goroutine：发现新节点后询问是否连接
 	go func() {
 		reader := bufio.NewReader(os.Stdin)

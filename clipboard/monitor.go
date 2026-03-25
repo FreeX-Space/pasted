@@ -73,8 +73,9 @@ func (m *Monitor) watchText() {
 }
 
 // watchImage 监听图像剪贴板变更
+// 使用平台特定的 watchImageData（macOS 支持 TIFF 截图格式）
 func (m *Monitor) watchImage() {
-	ch := clipboard.Watch(m.ctx, clipboard.FmtImage)
+	ch := watchImageData(m.ctx)
 	for data := range ch {
 		if len(data) == 0 {
 			continue
