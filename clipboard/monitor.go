@@ -12,6 +12,12 @@ import (
 	"golang.design/x/clipboard"
 )
 
+// clipChange 表示一次剪贴板变更事件
+type clipChange struct {
+	IsImage bool
+	Data    []byte
+}
+
 // Monitor 剪贴板监控器
 type Monitor struct {
 	mu              sync.Mutex
@@ -39,21 +45,21 @@ func NewMonitor(onChanged func(frame *network.Frame)) (*Monitor, error) {
 	}, nil
 }
 
-// Start 启动剪贴板监听（文本 + 图像各一个 goroutine）
+// Start 启动剪贴板监听（统一的单 goroutine 监听文本 + 图像）
 func (m *Monitor) Start() {
-	go m.watchText()
-	go m.watchImage()
+	go m.watchAll()
 	logger.Info("剪贴板监听已启动（文本 + 图像）")
 }
 
-// watchText 监听文本剪贴板变更
-func (m *Monitor) watchText() {
-	ch := clipboard.Watch(m.ctx, clipboard.FmtText)
-	for data := range ch {
-		if len(data) == 0 {
+// watchAll 统一监听剪贴板变更（文本 + 图像）
+// 使用平台特定的 watchClipboardData 实现，macOS 上确保单线程访问 NSPasteboard
+func (m *Monitor) watchAll() {
+	ch := watchClipboardData(m.ctx)
+	for change := range ch {
+		if len(change.Data) == 0 {
 			continue
 		}
-		hash := sha256.Sum256(data)
+		hash := sha256.Sum256(change.Data)
 
 		m.mu.Lock()
 		if hash == m.lastWrittenHash {
@@ -63,35 +69,18 @@ func (m *Monitor) watchText() {
 		}
 		m.mu.Unlock()
 
-		// 用户在本机复制了新的文本，通知上层广播
-		frame := network.NewFrame(network.TypeText, data)
-		logger.Info("检测到本地文本变更, 大小: %d bytes", len(data))
-		if m.onChanged != nil {
-			m.onChanged(&frame)
+		var frameType byte
+		var dataType string
+		if change.IsImage {
+			frameType = network.TypeImage
+			dataType = "图像"
+		} else {
+			frameType = network.TypeText
+			dataType = "文本"
 		}
-	}
-}
 
-// watchImage 监听图像剪贴板变更
-// 使用平台特定的 watchImageData（macOS 支持 TIFF 截图格式）
-func (m *Monitor) watchImage() {
-	ch := watchImageData(m.ctx)
-	for data := range ch {
-		if len(data) == 0 {
-			continue
-		}
-		hash := sha256.Sum256(data)
-
-		m.mu.Lock()
-		if hash == m.lastWrittenHash {
-			m.mu.Unlock()
-			continue
-		}
-		m.mu.Unlock()
-
-		// 用户在本机复制/截图了新的图像，通知上层广播
-		frame := network.NewFrame(network.TypeImage, data)
-		logger.Info("检测到本地图像变更, 大小: %d bytes", len(data))
+		frame := network.NewFrame(frameType, change.Data)
+		logger.Info("检测到本地%s变更, 大小: %d bytes", dataType, len(change.Data))
 		if m.onChanged != nil {
 			m.onChanged(&frame)
 		}

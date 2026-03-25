@@ -1,10 +1,25 @@
-// macOS 平台剪贴板图像读取（支持 PNG + TIFF）
-// 解决 golang.design/x/clipboard 只读 NSPasteboardTypePNG 导致截图不被检测的问题
+// macOS 平台剪贴板读取（文本 + 图像）
+// 所有 NSPasteboard 访问必须在同一线程，不可并发
 
 //go:build darwin && !ios
 
 #import <Foundation/Foundation.h>
 #import <Cocoa/Cocoa.h>
+
+// pasteboard_read_string 从剪贴板读取文本数据
+unsigned int pasteboard_read_string(void **out) {
+    @autoreleasepool {
+        NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+        NSData *data = [pasteboard dataForType:NSPasteboardTypeString];
+        if (data == nil) {
+            return 0;
+        }
+        NSUInteger siz = [data length];
+        *out = malloc(siz);
+        [data getBytes:*out length:siz];
+        return siz;
+    }
+}
 
 // pasteboard_read_image 从剪贴板读取图像数据（优先 PNG，回退 TIFF→PNG）
 unsigned int pasteboard_read_image(void **out) {

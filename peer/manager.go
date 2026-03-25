@@ -33,6 +33,14 @@ func NewManager() *Manager {
 	}
 }
 
+// Has 检查指定 key 的节点是否已存在
+func (m *Manager) Has(key string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.peers[key]
+	return ok
+}
+
 // Add 添加一个已连接节点
 func (m *Manager) Add(key string, p *Peer) {
 	m.mu.Lock()
@@ -40,6 +48,7 @@ func (m *Manager) Add(key string, p *Peer) {
 	m.peers[key] = p
 	logger.Info("节点已加入: %s", p.ID())
 }
+
 
 // Remove 移除一个节点
 func (m *Manager) Remove(key string) {

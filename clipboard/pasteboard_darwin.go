@@ -1,7 +1,10 @@
-// macOS 平台：通过 cgo 直接读取 NSPasteboard，支持 TIFF（截图）→ PNG 转换
+// macOS 平台：统一的剪贴板监听（文本 + 图像）
 //
-// 解决 golang.design/x/clipboard 只读 NSPasteboardTypePNG 导致
-// macOS 截图（TIFF 格式）无法被检测的问题。
+// 核心原则：所有 NSPasteboard 访问必须在同一个 goroutine/线程中，
+// 不可并发调用。否则 NSPasteboard 内部断言会触发 SIGTRAP 崩溃。
+//
+// 因此不使用 golang.design/x/clipboard 的 Watch 函数（它会创建独立 goroutine），
+// 而是自行实现统一的 changeCount 轮询 + 数据读取。
 
 //go:build darwin && !ios
 
@@ -11,7 +14,7 @@ package clipboard
 #cgo LDFLAGS: -framework Foundation -framework Cocoa
 #include <stdlib.h>
 
-// 在 pasteboard_darwin.m 中实现
+extern unsigned int pasteboard_read_string(void **out);
 extern unsigned int pasteboard_read_image(void **out);
 extern long pasteboard_change_count();
 */
@@ -22,6 +25,17 @@ import (
 	"time"
 	"unsafe"
 )
+
+// readNativeText 从 macOS 剪贴板读取文本数据
+func readNativeText() []byte {
+	var data unsafe.Pointer
+	n := C.pasteboard_read_string(&data)
+	if data == nil || n == 0 {
+		return nil
+	}
+	defer C.free(data)
+	return C.GoBytes(data, C.int(n))
+}
 
 // readNativeImage 从 macOS 剪贴板读取图像数据（PNG 或 TIFF→PNG）
 func readNativeImage() []byte {
@@ -34,12 +48,12 @@ func readNativeImage() []byte {
 	return C.GoBytes(data, C.int(n))
 }
 
-// watchImageData 轮询 macOS 剪贴板变更，检测图像数据（支持 TIFF 截图）
-func watchImageData(ctx context.Context) <-chan []byte {
-	recv := make(chan []byte, 1)
+// watchClipboardData 统一监听剪贴板变更（文本 + 图像），单 goroutine 避免并发访问 NSPasteboard
+func watchClipboardData(ctx context.Context) <-chan clipChange {
+	recv := make(chan clipChange, 1)
 
 	go func() {
-		// 锁定到固定 OS 线程，确保 ObjC 运行时状态一致
+		// 锁定到固定 OS 线程，确保所有 NSPasteboard 调用在同一线程
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		defer close(recv)
@@ -56,14 +70,18 @@ func watchImageData(ctx context.Context) <-chan []byte {
 			case <-ti.C:
 				cur := int64(C.pasteboard_change_count())
 				if lastCount != cur {
-					b := readNativeImage()
-					if b == nil {
-						// 不是图像变更（如文本），更新计数避免重复读取
-						lastCount = cur
+					lastCount = cur
+
+					// 优先检查图像（PNG + TIFF 截图）
+					if imgData := readNativeImage(); imgData != nil {
+						recv <- clipChange{IsImage: true, Data: imgData}
 						continue
 					}
-					recv <- b
-					lastCount = cur
+
+					// 再检查文本
+					if textData := readNativeText(); textData != nil {
+						recv <- clipChange{IsImage: false, Data: textData}
+					}
 				}
 			}
 		}

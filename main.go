@@ -105,7 +105,25 @@ func main() {
 			)
 			logger.Info("远端数据已写入本地剪贴板 [%s][%d bytes]", dataType, len(frame.Payload))
 		}
+	}, func(peerAddr string, client *network.Client) {
+		// 入站连接回调：将入站连接注册为可发送的 Peer，实现双向同步
+		peerIP := peerAddr
+		if idx := strings.LastIndex(peerAddr, ":"); idx > 0 {
+			peerIP = peerAddr[:idx]
+		}
+		// 如果已有该节点（主动连接或 mDNS），跳过
+		if peerMgr.Has(peerIP) {
+			logger.Info("入站连接 %s 已在节点列表中，跳过注册", peerIP)
+			return
+		}
+		peerMgr.Add(peerIP, &peer.Peer{
+			Hostname: peerIP,
+			IP:       peerIP,
+			Client:   client,
+		})
+		logger.Info("✅ 入站连接 %s 已注册为可发送节点（双向同步）", peerIP)
 	})
+
 	if err != nil {
 		logger.Error("启动 TLS 服务端失败: %v", err)
 		os.Exit(1)

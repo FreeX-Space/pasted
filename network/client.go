@@ -25,6 +25,12 @@ func NewClient(addr string, tlsConfig *tls.Config) (*Client, error) {
 	return &Client{conn: conn}, nil
 }
 
+// NewClientFromConn 从已有连接创建 Client（用于入站连接的反向发送）
+func NewClientFromConn(conn net.Conn) *Client {
+	return &Client{conn: conn}
+}
+
+
 // Send 向远端节点发送一个帧（线程安全）
 func (c *Client) Send(frame *Frame) error {
 	c.mu.Lock()
