@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/babafeng/pasted/logger"
 )
@@ -47,6 +48,7 @@ func (c *Client) Send(frame *Frame) error {
 func (c *Client) ReadLoop(onRecv func(peerAddr string, frame *Frame), onDisconnect func()) {
 	peerAddr := c.conn.RemoteAddr().String()
 	for {
+		c.conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 		frame, err := DecodeFrame(c.conn)
 		if err != nil {
 			logger.Warn("远端连接 %s 读取帧失败/已断开: %v", peerAddr, err)
@@ -55,6 +57,9 @@ func (c *Client) ReadLoop(onRecv func(peerAddr string, frame *Frame), onDisconne
 				onDisconnect()
 			}
 			return
+		}
+		if frame.Type == TypeHeartbeat {
+			continue // heartbeat only used to keep connection alive
 		}
 		if onRecv != nil {
 			onRecv(peerAddr, frame)

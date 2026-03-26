@@ -10,8 +10,9 @@ import (
 
 // 帧类型常量
 const (
-	TypeText  byte = 0x01
-	TypeImage byte = 0x02
+	TypeText      byte = 0x01
+	TypeImage     byte = 0x02
+	TypeHeartbeat byte = 0x03
 )
 
 // Frame 表示一个传输帧
@@ -68,7 +69,7 @@ func DecodeFrame(r io.Reader) (*Frame, error) {
 		return nil, fmt.Errorf("读取 Type 失败: %w", err)
 	}
 	f.Type = typeBuf[0]
-	if f.Type != TypeText && f.Type != TypeImage {
+	if f.Type != TypeText && f.Type != TypeImage && f.Type != TypeHeartbeat {
 		return nil, fmt.Errorf("未知帧类型: 0x%02x", f.Type)
 	}
 

@@ -137,6 +137,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 5.8 启动心跳广播定时任务（每 5 秒广播一次心跳帧）
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			heartbeatFrame := network.NewFrame(network.TypeHeartbeat, nil)
+			peerMgr.Broadcast(&heartbeatFrame)
+		}
+	}()
+
 	// 6. 注册 mDNS 服务
 	if err := mdnsSvc.Register(); err != nil {
 		logger.Error("注册 mDNS 服务失败: %v", err)
@@ -171,12 +181,17 @@ func main() {
 					IP:       targetIP,
 					Client:   client,
 				})
-				
-				// 主动连接方必须启动读循环才能接收对方数据（双向同步）
-				go client.ReadLoop(onRecv, func() { onDisconnect(addr) })
+				// 主动连接方启动读循环，等待断开后触发重连逻辑
+				done := make(chan struct{})
+				go client.ReadLoop(onRecv, func() {
+					onDisconnect(addr)
+					close(done)
+				})
 				
 				logger.Info("✅ 已主动连接到 %s", addr)
-				break
+				<-done
+				logger.Warn("与 %s 的连接已断开，3 秒后准备重连...", addr)
+				time.Sleep(3 * time.Second)
 			}
 		}()
 	}
@@ -185,15 +200,25 @@ func main() {
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
 		clientTLSConfig := network.NewClientTLSConfig()
+		approvedHosts := make(map[string]bool)
 
 		for peerInfo := range foundCh {
-			fmt.Printf("\n发现新节点: %s — 是否建立连接? (Y/n): ", peerInfo.ID())
-			answer, _ := reader.ReadString('\n')
-			answer = strings.TrimSpace(strings.ToLower(answer))
-
-			if answer == "n" || answer == "no" {
-				logger.Info("已跳过节点: %s", peerInfo.ID())
+			if peerMgr.Has(peerInfo.IP) {
 				continue
+			}
+
+			if !approvedHosts[peerInfo.Hostname] {
+				fmt.Printf("\n发现新节点: %s — 是否建立连接? (Y/n): ", peerInfo.ID())
+				answer, _ := reader.ReadString('\n')
+				answer = strings.TrimSpace(strings.ToLower(answer))
+
+				if answer == "n" || answer == "no" {
+					logger.Info("已跳过节点: %s", peerInfo.ID())
+					continue
+				}
+				approvedHosts[peerInfo.Hostname] = true
+			} else {
+				logger.Info("尝试自动重连获批节点: %s", peerInfo.ID())
 			}
 
 			// 建立 TLS 连接

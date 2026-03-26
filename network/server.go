@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/babafeng/pasted/logger"
 )
@@ -74,6 +75,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	for {
+		conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 		frame, err := DecodeFrame(conn)
 		if err != nil {
 			logger.Warn("连接 %s 读取帧失败/已断开: %v", peerAddr, err)
@@ -82,6 +84,9 @@ func (s *Server) handleConn(conn net.Conn) {
 				s.onDisconnect(peerAddr)
 			}
 			return
+		}
+		if frame.Type == TypeHeartbeat {
+			continue // heartbeat only used to keep connection alive
 		}
 		if s.onRecv != nil {
 			s.onRecv(peerAddr, frame)

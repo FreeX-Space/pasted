@@ -101,8 +101,6 @@ func (s *Service) Browse(interval time.Duration, done <-chan struct{}) <-chan Pe
 
 	go func() {
 		defer close(found)
-		// 记录已发现的节点，避免重复通知
-		seen := make(map[string]bool)
 
 		// 静默 hashicorp/mdns 库内部的 IPv6 噪音日志
 		origWriter := log.Writer()
@@ -131,11 +129,7 @@ func (s *Service) Browse(interval time.Duration, done <-chan struct{}) <-chan Pe
 					if s.isLocalIP(peer.IP) {
 						continue
 					}
-					key := peer.IP
-					if !seen[key] {
-						seen[key] = true
-						found <- *peer
-					}
+					found <- *peer
 				}
 			}()
 
