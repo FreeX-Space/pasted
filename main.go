@@ -74,10 +74,8 @@ func main() {
 	}
 	logger.Info("TLS 自签证书已生成（内存中，ECDSA P-256）")
 
-	// 5. 启动 TLS 服务端（接收远端同步数据 → 写入本地剪贴板）
-	serverTLSConfig := network.NewServerTLSConfig(cert)
-	_, err = network.NewServer(ListenPort, serverTLSConfig, func(peerAddr string, frame *network.Frame) {
-		// 从 peerAddr 解析 IP（去掉端口）
+	// 5. 提取公用的数据接收与断开连接回调
+	onRecv := func(peerAddr string, frame *network.Frame) {
 		peerIP := peerAddr
 		if idx := strings.LastIndex(peerAddr, ":"); idx > 0 {
 			peerIP = peerAddr[:idx]
@@ -88,7 +86,6 @@ func main() {
 			dataType = logger.DataTypeImage
 		}
 
-		// 尝试找到发送方节点的 Hostname
 		senderHostname := peerIP
 		for _, p := range peerMgr.List() {
 			if p.IP == peerIP {
@@ -105,13 +102,21 @@ func main() {
 			)
 			logger.Info("远端数据已写入本地剪贴板 [%s][%d bytes]", dataType, len(frame.Payload))
 		}
-	}, func(peerAddr string, client *network.Client) {
-		// 入站连接回调：将入站连接注册为可发送的 Peer，实现双向同步
+	}
+
+	onDisconnect := func(peerAddr string) {
 		peerIP := peerAddr
 		if idx := strings.LastIndex(peerAddr, ":"); idx > 0 {
 			peerIP = peerAddr[:idx]
 		}
-		// 如果已有该节点（主动连接或 mDNS），跳过
+		peerMgr.Remove(peerIP) // 内部有加锁且只会打印移除日志并安全删除
+	}
+
+	onConnect := func(peerAddr string, client *network.Client) {
+		peerIP := peerAddr
+		if idx := strings.LastIndex(peerAddr, ":"); idx > 0 {
+			peerIP = peerAddr[:idx]
+		}
 		if peerMgr.Has(peerIP) {
 			logger.Info("入站连接 %s 已在节点列表中，跳过注册", peerIP)
 			return
@@ -122,8 +127,11 @@ func main() {
 			Client:   client,
 		})
 		logger.Info("✅ 入站连接 %s 已注册为可发送节点（双向同步）", peerIP)
-	})
+	}
 
+	// 5.5 启动 TLS 服务端（接收远端同步数据 → 写入本地剪贴板）
+	serverTLSConfig := network.NewServerTLSConfig(cert)
+	_, err = network.NewServer(ListenPort, serverTLSConfig, onRecv, onConnect, onDisconnect)
 	if err != nil {
 		logger.Error("启动 TLS 服务端失败: %v", err)
 		os.Exit(1)
@@ -163,6 +171,10 @@ func main() {
 					IP:       targetIP,
 					Client:   client,
 				})
+				
+				// 主动连接方必须启动读循环才能接收对方数据（双向同步）
+				go client.ReadLoop(onRecv, func() { onDisconnect(addr) })
+				
 				logger.Info("✅ 已主动连接到 %s", addr)
 				break
 			}
@@ -197,6 +209,9 @@ func main() {
 				IP:       peerInfo.IP,
 				Client:   client,
 			})
+
+			// 主动确认的 mDNS 节点同样需要启动读循环
+			go client.ReadLoop(onRecv, func() { onDisconnect(addr) })
 
 			logger.Info("✅ 已与 %s 建立加密连接", peerInfo.ID())
 		}

@@ -41,6 +41,27 @@ func (c *Client) Send(frame *Frame) error {
 	return nil
 }
 
+// ReadLoop 持续从远端读取帧数据，实现全双工。
+// onRecv: 接收到帧的回调
+// onDisconnect: 读取出错（如连接断开）时的回调
+func (c *Client) ReadLoop(onRecv func(peerAddr string, frame *Frame), onDisconnect func()) {
+	peerAddr := c.conn.RemoteAddr().String()
+	for {
+		frame, err := DecodeFrame(c.conn)
+		if err != nil {
+			logger.Warn("远端连接 %s 读取帧失败/已断开: %v", peerAddr, err)
+			c.Close()
+			if onDisconnect != nil {
+				onDisconnect()
+			}
+			return
+		}
+		if onRecv != nil {
+			onRecv(peerAddr, frame)
+		}
+	}
+}
+
 // Close 关闭连接
 func (c *Client) Close() error {
 	return c.conn.Close()

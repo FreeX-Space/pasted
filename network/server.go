@@ -16,16 +16,21 @@ type OnReceiveFunc func(peerAddr string, frame *Frame)
 // 用于将入站连接注册为可发送的 Peer，实现双向同步
 type OnConnectFunc func(peerAddr string, client *Client)
 
+// DisconnectFunc 断开连接时的回调函数类型
+type DisconnectFunc func(peerAddr string)
+
 // Server TLS 服务端，监听入站连接
 type Server struct {
-	listener  net.Listener
-	onRecv    OnReceiveFunc
-	onConnect OnConnectFunc
+	listener     net.Listener
+	onRecv       OnReceiveFunc
+	onConnect    OnConnectFunc
+	onDisconnect DisconnectFunc
 }
 
 // NewServer 创建并启动 TLS 服务端，监听指定端口
 // onConnect: 入站连接建立时回调（可为 nil），用于注册反向发送通道
-func NewServer(port int, tlsConfig *tls.Config, onRecv OnReceiveFunc, onConnect OnConnectFunc) (*Server, error) {
+// onDisconnect: 入站连接断开时回调（可为 nil）
+func NewServer(port int, tlsConfig *tls.Config, onRecv OnReceiveFunc, onConnect OnConnectFunc, onDisconnect DisconnectFunc) (*Server, error) {
 	addr := fmt.Sprintf(":%d", port)
 	listener, err := tls.Listen("tcp", addr, tlsConfig)
 	if err != nil {
@@ -33,9 +38,10 @@ func NewServer(port int, tlsConfig *tls.Config, onRecv OnReceiveFunc, onConnect 
 	}
 
 	s := &Server{
-		listener:  listener,
-		onRecv:    onRecv,
-		onConnect: onConnect,
+		listener:     listener,
+		onRecv:       onRecv,
+		onConnect:    onConnect,
+		onDisconnect: onDisconnect,
 	}
 	go s.acceptLoop()
 	logger.Info("TLS 服务端已启动，监听 %s", addr)
@@ -70,7 +76,11 @@ func (s *Server) handleConn(conn net.Conn) {
 	for {
 		frame, err := DecodeFrame(conn)
 		if err != nil {
-			logger.Warn("连接 %s 读取帧失败: %v", peerAddr, err)
+			logger.Warn("连接 %s 读取帧失败/已断开: %v", peerAddr, err)
+			conn.Close()
+			if s.onDisconnect != nil {
+				s.onDisconnect(peerAddr)
+			}
 			return
 		}
 		if s.onRecv != nil {
