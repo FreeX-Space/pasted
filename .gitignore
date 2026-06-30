@@ -1,4 +1,5 @@
 # Go 编译产物
+dist/
 pasted
 pasted.exe
 *.exe
