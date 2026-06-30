@@ -71,13 +71,13 @@ func (s *Service) Register() error {
 	}
 
 	service, err := mdns.NewMDNSService(
-		s.hostname,   // 实例名
-		ServiceName,  // 服务类型
-		Domain,       // 域名
-		"",           // 主机名（空=自动）
-		s.port,       // 端口
-		nil,          // IPs（nil=自动）
-		info,         // TXT 记录
+		s.hostname,  // 实例名
+		ServiceName, // 服务类型
+		Domain,      // 域名
+		"",          // 主机名（空=自动）
+		s.port,      // 端口
+		nil,         // IPs（nil=自动）
+		info,        // TXT 记录
 	)
 	if err != nil {
 		return fmt.Errorf("创建 mDNS 服务失败: %w", err)

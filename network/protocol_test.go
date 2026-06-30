@@ -96,8 +96,8 @@ func TestFrameEncodeDecodeEmpty(t *testing.T) {
 func TestDecodeInvalidType(t *testing.T) {
 	// 构造一个无效类型的帧
 	var buf bytes.Buffer
-	buf.WriteByte(0xFF) // 无效类型
-	buf.Write(make([]byte, 32)) // fake hash
+	buf.WriteByte(0xFF)           // 无效类型
+	buf.Write(make([]byte, 32))   // fake hash
 	buf.Write([]byte{0, 0, 0, 0}) // length=0
 
 	_, err := DecodeFrame(&buf)

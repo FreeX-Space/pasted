@@ -26,6 +26,11 @@ type Manager struct {
 	peers map[string]*Peer // key: "ip:port" 或 "ip"
 }
 
+type peerEntry struct {
+	key  string
+	peer *Peer
+}
+
 // NewManager 创建节点管理器
 func NewManager() *Manager {
 	return &Manager{
@@ -41,6 +46,14 @@ func (m *Manager) Has(key string) bool {
 	return ok
 }
 
+// Get 返回指定节点快照。
+func (m *Manager) Get(key string) (*Peer, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.peers[key]
+	return p, ok
+}
+
 // Add 添加一个已连接节点
 func (m *Manager) Add(key string, p *Peer) {
 	m.mu.Lock()
@@ -48,7 +61,6 @@ func (m *Manager) Add(key string, p *Peer) {
 	m.peers[key] = p
 	logger.Info("节点已加入: %s", p.ID())
 }
-
 
 // Remove 移除一个节点
 func (m *Manager) Remove(key string) {
@@ -64,20 +76,29 @@ func (m *Manager) Remove(key string) {
 // Broadcast 向所有已连接节点广播一个帧
 // 返回发送成功的节点列表
 func (m *Manager) Broadcast(frame *network.Frame) []*Peer {
+	return m.BroadcastExcept("", frame)
+}
+
+// BroadcastExcept 向除 excludeKey 外的所有已连接节点广播一个帧。
+func (m *Manager) BroadcastExcept(excludeKey string, frame *network.Frame) []*Peer {
 	m.mu.RLock()
 	// 复制列表，避免长时间持锁
-	snapshot := make([]*Peer, 0, len(m.peers))
-	for _, p := range m.peers {
-		snapshot = append(snapshot, p)
+	snapshot := make([]peerEntry, 0, len(m.peers))
+	for key, p := range m.peers {
+		if key == excludeKey {
+			continue
+		}
+		snapshot = append(snapshot, peerEntry{key: key, peer: p})
 	}
 	m.mu.RUnlock()
 
 	var sent []*Peer
 	var failed []string
-	for _, p := range snapshot {
+	for _, entry := range snapshot {
+		p := entry.peer
 		if err := p.Client.Send(frame); err != nil {
 			logger.Error("发送到 %s 失败: %v", p.ID(), err)
-			failed = append(failed, p.IP)
+			failed = append(failed, entry.key)
 		} else {
 			sent = append(sent, p)
 		}

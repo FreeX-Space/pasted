@@ -31,7 +31,6 @@ func NewClientFromConn(conn net.Conn) *Client {
 	return &Client{conn: conn}
 }
 
-
 // Send 向远端节点发送一个帧（线程安全）
 func (c *Client) Send(frame *Frame) error {
 	c.mu.Lock()

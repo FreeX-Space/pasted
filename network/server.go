@@ -32,7 +32,11 @@ type Server struct {
 // onConnect: 入站连接建立时回调（可为 nil），用于注册反向发送通道
 // onDisconnect: 入站连接断开时回调（可为 nil）
 func NewServer(port int, tlsConfig *tls.Config, onRecv OnReceiveFunc, onConnect OnConnectFunc, onDisconnect DisconnectFunc) (*Server, error) {
-	addr := fmt.Sprintf(":%d", port)
+	return NewServerAddr(fmt.Sprintf(":%d", port), tlsConfig, onRecv, onConnect, onDisconnect)
+}
+
+// NewServerAddr 创建并启动 TLS 服务端，监听指定地址。
+func NewServerAddr(addr string, tlsConfig *tls.Config, onRecv OnReceiveFunc, onConnect OnConnectFunc, onDisconnect DisconnectFunc) (*Server, error) {
 	listener, err := tls.Listen("tcp", addr, tlsConfig)
 	if err != nil {
 		return nil, fmt.Errorf("TLS 监听失败 %s: %w", addr, err)
