@@ -75,3 +75,8 @@ func (c *Client) Close() error {
 func (c *Client) RemoteAddr() net.Addr {
 	return c.conn.RemoteAddr()
 }
+
+// LocalAddr 返回本地连接地址。
+func (c *Client) LocalAddr() net.Addr {
+	return c.conn.LocalAddr()
+}

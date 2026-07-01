@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"net"
+	"testing"
+)
 
 func TestParseArgsListenDefault(t *testing.T) {
 	cfg, err := parseArgs([]string{"-L"})
@@ -34,5 +37,14 @@ func TestParseTLSEndpointDefaultsPort(t *testing.T) {
 func TestParseTLSEndpointRejectsUnsupportedScheme(t *testing.T) {
 	if _, err := parseTLSEndpoint("tcp://1.1.1.1:48217", ""); err == nil {
 		t.Fatal("expected unsupported scheme to fail")
+	}
+}
+
+func TestIsUsableLocalIPv4RejectsLinkLocal(t *testing.T) {
+	if isUsableLocalIPv4(net.ParseIP("169.254.34.29").To4()) {
+		t.Fatal("169.254.x.x should not be selected as local identity")
+	}
+	if !isUsableLocalIPv4(net.ParseIP("192.168.31.23").To4()) {
+		t.Fatal("private LAN IPv4 should be usable")
 	}
 }

@@ -62,6 +62,23 @@ func (m *Manager) Add(key string, p *Peer) {
 	logger.Info("节点已加入: %s", p.ID())
 }
 
+// UpdateIdentity 更新已连接节点的展示身份。
+func (m *Manager) UpdateIdentity(key, hostname, ip string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.peers[key]
+	if !ok {
+		return false
+	}
+	if hostname != "" {
+		p.Hostname = hostname
+	}
+	if ip != "" {
+		p.IP = ip
+	}
+	return true
+}
+
 // Remove 移除一个节点
 func (m *Manager) Remove(key string) {
 	m.mu.Lock()

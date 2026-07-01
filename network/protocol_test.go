@@ -152,3 +152,60 @@ func TestMultipleFramesDecode(t *testing.T) {
 		}
 	}
 }
+
+func TestHelloFrame(t *testing.T) {
+	frame := NewHelloFrame("L1102", "192.168.31.23")
+
+	var buf bytes.Buffer
+	if err := frame.Encode(&buf); err != nil {
+		t.Fatalf("编码失败: %v", err)
+	}
+
+	decoded, err := DecodeFrame(&buf)
+	if err != nil {
+		t.Fatalf("解码失败: %v", err)
+	}
+
+	source, err := ParseHelloFrame(decoded)
+	if err != nil {
+		t.Fatalf("解析 Hello 失败: %v", err)
+	}
+	if source.Hostname != "L1102" || source.IP != "192.168.31.23" {
+		t.Fatalf("身份不匹配: %#v", source)
+	}
+}
+
+func TestRelayFrameRoundTrip(t *testing.T) {
+	original := NewFrame(TypeText, []byte("from another client"))
+	relay, err := NewRelayFrame("L1102", "192.168.31.23", &original)
+	if err != nil {
+		t.Fatalf("创建中继帧失败: %v", err)
+	}
+	if relay.Type != TypeRelayText {
+		t.Fatalf("中继帧类型=%02x, want %02x", relay.Type, TypeRelayText)
+	}
+
+	source, unwrapped, err := UnwrapRelayFrame(&relay)
+	if err != nil {
+		t.Fatalf("解开中继帧失败: %v", err)
+	}
+	if source.Hostname != "L1102" || source.IP != "192.168.31.23" {
+		t.Fatalf("来源不匹配: %#v", source)
+	}
+	if unwrapped.Type != TypeText {
+		t.Fatalf("原始帧类型=%02x, want %02x", unwrapped.Type, TypeText)
+	}
+	if !bytes.Equal(unwrapped.Payload, original.Payload) {
+		t.Fatalf("原始 Payload 不匹配")
+	}
+	if unwrapped.Hash != original.Hash {
+		t.Fatalf("原始 Hash 不匹配")
+	}
+}
+
+func TestNewRelayFrameRejectsUnsupportedType(t *testing.T) {
+	heartbeat := NewFrame(TypeHeartbeat, nil)
+	if _, err := NewRelayFrame("node", "192.168.31.23", &heartbeat); err == nil {
+		t.Fatal("心跳帧不应能创建中继帧")
+	}
+}

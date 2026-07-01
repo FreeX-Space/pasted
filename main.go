@@ -204,13 +204,38 @@ func runRelayServer(listenAddr string) error {
 	}
 
 	onRecv := func(peerAddr string, frame *network.Frame) {
+		if frame.Type == network.TypeHello {
+			source, err := network.ParseHelloFrame(frame)
+			if err != nil {
+				logger.Warn("客户端 %s 身份帧解析失败: %v", peerAddr, err)
+				return
+			}
+			if !peerMgr.UpdateIdentity(peerAddr, source.Hostname, source.IP) {
+				logger.Warn("客户端 %s 身份更新失败: 节点不存在", peerAddr)
+				return
+			}
+			logger.Info("客户端身份已更新: %s -> %s(%s)", peerAddr, source.Hostname, source.IP)
+			return
+		}
+
+		if frame.Type != network.TypeText && frame.Type != network.TypeImage {
+			logger.Warn("忽略客户端 %s 的非数据帧: 0x%02x", peerAddr, frame.Type)
+			return
+		}
+
 		dataType := frameDataType(frame)
 		sender := peerFromAddr(peerAddr, nil)
 		if p, ok := peerMgr.Get(peerAddr); ok {
 			sender = p
 		}
 
-		sent := peerMgr.BroadcastExcept(peerAddr, frame)
+		relayFrame, err := network.NewRelayFrame(sender.Hostname, sender.IP, frame)
+		if err != nil {
+			logger.Warn("为客户端 %s 创建中继帧失败: %v", peerAddr, err)
+			return
+		}
+
+		sent := peerMgr.BroadcastExcept(peerAddr, &relayFrame)
 		for _, p := range sent {
 			logger.LogSync(
 				sender.Hostname, sender.IP,
@@ -248,7 +273,7 @@ func runRelayServer(listenAddr string) error {
 }
 
 func runRelayClient(serverAddr string) error {
-	localHost, localIP := localIdentity()
+	localHost, localIP := localIdentity(serverAddr)
 	peerMgr := peer.NewManager()
 
 	clipMon, err := cb.NewMonitor(func(frame *network.Frame) {
@@ -289,6 +314,16 @@ func runRelayClient(serverAddr string) error {
 				continue
 			}
 
+			helloFrame := network.NewHelloFrame(localHost, localIP)
+			if err := client.Send(&helloFrame); err != nil {
+				_ = client.Close()
+				logger.Error("发送客户端身份失败: %v，3 秒后重试...", err)
+				if !sleepOrDone(3*time.Second, done) {
+					return
+				}
+				continue
+			}
+
 			serverPeer := &peer.Peer{
 				Hostname: "relay",
 				IP:       serverAddr,
@@ -298,10 +333,27 @@ func runRelayClient(serverAddr string) error {
 
 			disconnected := make(chan struct{})
 			go client.ReadLoop(func(peerAddr string, frame *network.Frame) {
-				dataType := frameDataType(frame)
-				if clipMon.WriteFromRemote(frame) {
-					logger.LogSync("relay", peerAddr, localHost, localIP, frame.Hash, dataType, len(frame.Payload))
-					logger.Info("远端数据已写入本地剪贴板 [%s][%d bytes]", dataType, len(frame.Payload))
+				source := network.RelaySource{Hostname: "relay", IP: peerAddr}
+				incoming := frame
+				if network.IsRelayFrame(frame.Type) {
+					var err error
+					source, incoming, err = network.UnwrapRelayFrame(frame)
+					if err != nil {
+						logger.Warn("中继帧解析失败: %v", err)
+						return
+					}
+					source = normalizeRelaySource(source, peerAddr)
+				}
+				if incoming.Type != network.TypeText && incoming.Type != network.TypeImage {
+					logger.Warn("忽略服务端 %s 的非数据帧: 0x%02x", peerAddr, incoming.Type)
+					return
+				}
+
+				dataType := frameDataType(incoming)
+				if clipMon.WriteFromRemote(incoming) {
+					logger.LogSync(source.Hostname, source.IP, localHost, localIP, incoming.Hash, dataType, len(incoming.Payload))
+					logger.Info("%s(%s) --> relay(%s) 数据已写入本地剪贴板 [%s][%d bytes]",
+						source.Hostname, source.IP, serverAddr, dataType, len(incoming.Payload))
 				}
 			}, func() {
 				peerMgr.Remove(serverAddr)
@@ -362,24 +414,87 @@ func peerFromAddr(addr string, client *network.Client) *peer.Peer {
 	}
 }
 
-func localIdentity() (string, string) {
+func normalizeRelaySource(source network.RelaySource, fallbackAddr string) network.RelaySource {
+	if source.Hostname == "" {
+		source.Hostname = source.IP
+	}
+	if source.IP == "" {
+		source.IP = fallbackAddr
+	}
+	if source.Hostname == "" {
+		source.Hostname = fallbackAddr
+	}
+	return source
+}
+
+func localIdentity(remoteAddr string) (string, string) {
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
 		hostname = "localhost"
 	}
-
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return hostname, "127.0.0.1"
+	if ip := outboundIP(remoteAddr); ip != "" {
+		return hostname, ip
 	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.To4() == nil {
-			continue
-		}
-		return hostname, ipNet.IP.String()
+	if ip := preferredInterfaceIP(); ip != "" {
+		return hostname, ip
 	}
 	return hostname, "127.0.0.1"
+}
+
+func outboundIP(remoteAddr string) string {
+	conn, err := net.DialTimeout("udp", remoteAddr, time.Second)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return ""
+	}
+	ip := addr.IP.To4()
+	if ip == nil || !isUsableLocalIPv4(ip) {
+		return ""
+	}
+	return ip.String()
+}
+
+func preferredInterfaceIP() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	var fallback string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipNet.IP.To4()
+			if ip == nil || !isUsableLocalIPv4(ip) {
+				continue
+			}
+			if ip.IsPrivate() {
+				return ip.String()
+			}
+			if fallback == "" {
+				fallback = ip.String()
+			}
+		}
+	}
+	return fallback
+}
+
+func isUsableLocalIPv4(ip net.IP) bool {
+	return ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsMulticast() && !ip.IsUnspecified()
 }
 
 func waitForSignal() {
